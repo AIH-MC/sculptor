@@ -1,4 +1,11 @@
-use axum::{debug_handler, extract::{Query, State, ConnectInfo}, response::{IntoResponse, Response}, routing::get, Router};
+use axum::{
+    debug_handler,
+    extract::{Query, State, ConnectInfo},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+    http::HeaderMap
+};
 use reqwest::StatusCode;
 use ring::digest::{self, digest};
 use std::net::SocketAddr;
@@ -16,11 +23,19 @@ pub fn router() -> Router<AppState> {
 #[debug_handler]
 async fn id(
     // First stage of authentication
+    headers: HeaderMap,
     Query(query): Query<Id>,
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> String {
-    info!("[Authentication] ID request from {} for user {}", addr, query.username);
+    let real_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| addr.ip().to_string());
+
+    info!("[Authentication] ID request from {} (Real: {}) for user {}", addr, real_ip, query.username);
     let server_id =
         faster_hex::hex_string(&digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &rand()).as_ref()[0..20]);
     let state = state.user_manager;
@@ -31,6 +46,7 @@ async fn id(
 #[debug_handler]
 async fn verify(
     // Second stage of authentication
+    headers: HeaderMap,
     Query(query): Query<Verify>,
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -38,13 +54,22 @@ async fn verify(
     let server_id = query.id.clone();
     let nickname = state.user_manager.pending_remove(&server_id).unwrap().1; // TODO: Add error check
 
-    info!("[Authentication] Verify request from {} for user {}", addr, nickname);
+    // 获取真实 IP 逻辑：优先从 X-Forwarded-For 获取，没有则用 X-Real-IP，最后退回到 SocketAddr
+    let real_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next()) // 如果有多个代理，取第一个
+        .map(|v| v.trim().to_string())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()).map(|s| s.to_string()))
+        .unwrap_or_else(|| addr.ip().to_string());
+
+    info!("[Authentication] Verify request from {} (Real: {}) for user {}", addr, real_ip, nickname);
 
     let userinfo = match has_joined(
         State(state.clone()),
         &server_id,
         &nickname,
-        addr.ip().to_string()
+        real_ip
     ).await {
         Ok(d) => d,
         Err(_e) => {

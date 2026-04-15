@@ -1,6 +1,7 @@
-use axum::{debug_handler, extract::{Query, State}, response::{IntoResponse, Response}, routing::get, Router};
+use axum::{debug_handler, extract::{Query, State, ConnectInfo}, response::{IntoResponse, Response}, routing::get, Router};
 use reqwest::StatusCode;
 use ring::digest::{self, digest};
+use std::net::SocketAddr;
 use tracing::{error, info};
 
 use crate::{auth::{has_joined, Userinfo}, utils::rand, AppState};
@@ -17,7 +18,9 @@ async fn id(
     // First stage of authentication
     Query(query): Query<Id>,
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> String {
+    info!("[Authentication] ID request from {} for user {}", addr, query.username);
     let server_id =
         faster_hex::hex_string(&digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &rand()).as_ref()[0..20]);
     let state = state.user_manager;
@@ -30,13 +33,18 @@ async fn verify(
     // Second stage of authentication
     Query(query): Query<Verify>,
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     let server_id = query.id.clone();
     let nickname = state.user_manager.pending_remove(&server_id).unwrap().1; // TODO: Add error check
+
+    info!("[Authentication] Verify request from {} for user {}", addr, nickname);
+
     let userinfo = match has_joined(
         State(state.clone()),
         &server_id,
-        &nickname
+        &nickname,
+        addr.ip().to_string()
     ).await {
         Ok(d) => d,
         Err(_e) => {

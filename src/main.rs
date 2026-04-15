@@ -4,7 +4,7 @@ use axum::{extract::DefaultBodyLimit, routing::{delete, get, post, put}, Router}
 use dashmap::DashMap;
 use tracing_panic::panic_hook;
 use tracing_subscriber::{fmt::{self, time::ChronoLocal}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use std::{path::PathBuf, sync::Arc, env::var};
+use std::{path::PathBuf, sync::Arc, env::var, net::SocketAddr};
 use tokio::{fs, sync::RwLock, time::Instant};
 use tower_http::trace::TraceLayer;
 use lazy_static::lazy_static;
@@ -220,7 +220,7 @@ async fn app() -> Result<bool> {
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!("Listening on {}", listener.local_addr()?);
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     tracing::info!("Serve stopped.");
@@ -251,3 +251,4 @@ async fn shutdown_signal() {
         },
     }
 }
+

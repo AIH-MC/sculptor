@@ -75,13 +75,23 @@ async fn fetch_json(
     auth_provider: &AuthProvider,
     server_id: &str,
     username: &str,
+    ip: String,
 ) -> Result<(Uuid, AuthProvider), FetchError> {
     let client = reqwest::Client::builder().timeout(TIMEOUT).user_agent(USER_AGENT).build().unwrap();
     let url = auth_provider.url.clone();
 
+    let mut query = vec![
+        ("serverId", server_id.to_string()),
+        ("username", username.to_string()),
+    ];
+
+    if auth_provider.name == "Offline" {
+        query.push(("ip", ip));
+    }
+
     let res = client
         .get(url)
-        .query(&[("serverId", server_id), ("username", username)])
+        .query(&query)
         .send()
         .await?;
     trace!("{res:?}");
@@ -104,6 +114,7 @@ pub async fn has_joined(
     State(state): State<AppState>,
     server_id: &str,
     username: &str,
+    ip: String,
 ) -> anyhow::Result<Option<(Uuid, AuthProvider)>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     let AuthProviders(auth_providers) = state.config.read().await.auth_providers.clone();
@@ -114,6 +125,7 @@ pub async fn has_joined(
             provider.clone(),
             server_id.to_string(),
             username.to_string(),
+            ip.clone(),
             tx.clone()
         ));
     } 
@@ -158,9 +170,10 @@ async fn fetch_and_send(
     provider: AuthProvider,
     server_id: String,
     username: String,
+    ip: String,
     tx: tokio::sync::mpsc::Sender<Result<(Uuid, AuthProvider), FetchError>>
 ) {
-    let _ = tx.send(fetch_json(State(state), &provider, &server_id, &username).await)
+    let _ = tx.send(fetch_json(State(state), &provider, &server_id, &username, ip).await)
         .await.map_err( |err| trace!("fetch_and_send error [note: ok res returned and mpsc clossed]: {err:?}"));
 }
 
